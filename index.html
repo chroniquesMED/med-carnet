@@ -185,7 +185,7 @@ footer b{font-family:var(--display);font-style:normal;color:var(--ink)}
 </main>
 
 <div class="tools">
-  <span id="medSyncStatus">Connexion requise pour synchroniser</span>
+  <span id="medSyncStatus">Chargement du carnet partagé…</span>
   <button class="btn ghost" id="exp">Exporter mes notes</button>
   <button class="btn ghost" id="imp">Importer une sauvegarde</button>
   <button class="btn ghost" onclick="print()">Imprimer / PDF</button>
@@ -216,18 +216,7 @@ footer b{font-family:var(--display);font-style:normal;color:var(--ink)}
 }
 
 </style>
-<div id="medAuthGate">
- <form id="medAuthCard">
-  <h2>MED · Carnet partagé</h2>
-  <p>Connectez-vous pour accéder aux notes communes et les synchroniser entre appareils.</p>
-  <label for="medEmail">Adresse e-mail</label><input id="medEmail" type="email" autocomplete="email" required>
-  <label for="medPassword">Mot de passe</label><input id="medPassword" type="password" autocomplete="current-password" minlength="6" required>
-  <button class="btn" type="submit" id="medSignIn">Se connecter</button>
-  <button class="btn ghost" type="button" id="medSignUp">Créer un compte</button>
-  <p id="medAuthMsg" role="status">Connexion sécurisée par Supabase.</p>
-  <small>Utilisez le même compte sur vos appareils, ou créez un compte pour chaque membre. Les comptes doivent être confirmés par e-mail si cette option est activée dans Supabase.</small>
- </form>
-</div>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 const KEY='med-carnet-v2', SUPABASE_URL='https://kgfcwmiazubakuqbjako.supabase.co', SUPABASE_KEY='sb_publishable_wWL-L1JkACpSAD806_e0OA_QKp8w7TH', $=s=>document.querySelector(s);
@@ -312,61 +301,14 @@ $('#imp').onclick=()=>$('#file').click();
 $('#file').onchange=e=>{const f=e.target.files[0];if(!f)return;f.text().then(t=>{try{const d=JSON.parse(t);if(!d.sessions)throw 0;S=d;save();init()}catch(_){alert('Ce fichier n’est pas une sauvegarde valide.')}})};
 
 function init(){renderSess();renderPJ();renderNext();renderMy();show('s')}
-async function connectMED(email,password,signup=false){
-  const msg=$('#medAuthMsg');
-  const signIn=$('#medSignIn'), signUp=$('#medSignUp');
-  email = (email || '').trim();
-  if(!email || !password){
-    msg.textContent='Saisissez votre adresse e-mail et un mot de passe pour continuer.';
-    return false;
-  }
-  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
-    msg.textContent='Saisissez une adresse e-mail valide.';
-    return false;
-  }
-  if(password.length<6){
-    msg.textContent='Le mot de passe doit contenir au moins 6 caractères.';
-    return false;
-  }
-  signIn.disabled=true; signUp.disabled=true;
-  msg.textContent=signup?'Création du compte en cours…':'Connexion en cours…';
-  try{
-    const authRequest = signup
-      ? sb.auth.signUp({
-          email,
-          password,
-          options:{emailRedirectTo:'https://chroniquesmed.github.io/med-carnet/'}
-        })
-      : sb.auth.signInWithPassword({email,password});
-    const result = await Promise.race([
-      authRequest,
-      new Promise((_,reject)=>setTimeout(()=>reject(new Error('Le serveur met trop de temps à répondre. Vérifiez votre connexion puis réessayez.')),20000))
-    ]);
-    if(result.error){
-      msg.textContent=result.error.message;
-      return false;
-    }
-    if(signup && !result.data.session){
-      msg.textContent='Compte créé. Ouvrez le lien de confirmation le plus récent reçu par e-mail. Si le lien ouvre une page inaccessible, la configuration des URL Supabase doit être corrigée.';
-      return false;
-    }
-    return await loadCloudState();
-  }catch(err){
-    console.error('MED authentication error',err);
-    msg.textContent=err && err.message ? err.message : 'La connexion a échoué. Réessayez.';
-    return false;
-  }finally{
-    signIn.disabled=false; signUp.disabled=false;
-  }
-}
 async function loadCloudState(){
-  const msg=$('#medAuthMsg');
+  const status=$('#medSyncStatus');
   const withTimeout=(promise,label)=>Promise.race([
     promise,
     new Promise((_,reject)=>setTimeout(()=>reject(new Error(label+' : le serveur ne répond pas après 15 secondes.')),15000))
   ]);
   try{
-    msg.textContent='Connexion réussie. Chargement des notes partagées…';
+    status.textContent='Chargement du carnet partagé…';
     const {data:rows,error}=await withTimeout(
       sb.from('med_shared_state').select('state').eq('id','main').limit(1),
       'Chargement des notes'
@@ -376,7 +318,6 @@ async function loadCloudState(){
       S=rows[0].state;
       localStorage.setItem(KEY,JSON.stringify(S));
     }else{
-      // Première connexion : conserve les données locales de cet appareil et initialise la base partagée.
       const {error:writeError}=await withTimeout(
         sb.from('med_shared_state').upsert({id:'main',state:S,updated_at:new Date().toISOString()}),
         'Initialisation des notes'
@@ -384,34 +325,20 @@ async function loadCloudState(){
       if(writeError)throw writeError;
     }
     cloudReady=true;
-    $('#medAuthGate').hidden=true;
-    $('#medSyncStatus').textContent='Connecté · synchronisation en ligne';
+    status.textContent='Carnet partagé · synchronisation en ligne';
     init();
     return true;
   }catch(err){
     console.error('MED initial sync error',err);
-    // Ne pas bloquer tout le carnet si l’authentification a réussi mais que la base partagée est lente.
-    // On laisse l’application accessible en mode local et on signale que la synchronisation est indisponible.
     cloudReady=false;
-    $('#medAuthGate').hidden=true;
-    $('#medSyncStatus').textContent='Connecté, mais synchronisation indisponible — vos modifications restent locales sur cet appareil';
+    status.textContent='Hors ligne — sauvegarde locale uniquement';
     init();
     return false;
   }
 }
-$('#medAuthCard').addEventListener('submit',async e=>{
-  e.preventDefault();
-  await connectMED($('#medEmail').value.trim(),$('#medPassword').value,false);
-});
-$('#medSignUp').addEventListener('click',async()=>{
-  await connectMED($('#medEmail').value.trim(),$('#medPassword').value,true);
-});
-(async()=>{
-  try{
-    const {data}=await sb.auth.getSession();
-    if(data.session){await loadCloudState()}
-  }catch(e){console.error(e)}
-})();
+// L’application s’ouvre sans compte. Le carnet commun est chargé en arrière-plan.
+init();
+loadCloudState();
 </script>
 </body>
 </html>
