@@ -185,7 +185,7 @@ footer b{font-family:var(--display);font-style:normal;color:var(--ink)}
 </main>
 
 <div class="tools">
-  <span>Sauvegarde locale activée sur cet appareil</span>
+  <span id="medSyncStatus">Connexion requise pour synchroniser</span>
   <button class="btn ghost" id="exp">Exporter mes notes</button>
   <button class="btn ghost" id="imp">Importer une sauvegarde</button>
   <button class="btn ghost" onclick="print()">Imprimer / PDF</button>
@@ -193,8 +193,31 @@ footer b{font-family:var(--display);font-style:normal;color:var(--ink)}
 </div>
 <footer><b>MED · Carnet de campagne</b></footer>
 
+
+<style>
+#medAuthGate{position:fixed;inset:0;z-index:9999;background:rgba(24,29,23,.96);display:grid;place-items:center;padding:20px}
+#medAuthCard{background:var(--paper,#f4ecd9);color:var(--ink,#2a2418);max-width:460px;width:100%;padding:28px;border:1px solid var(--gold,#b98a4b);border-radius:8px}
+#medAuthCard h2{margin-top:0}#medAuthCard input{display:block;width:100%;margin:6px 0 14px;padding:10px;border:1px solid var(--line,#d3c4a2);background:white}
+#medAuthMsg{min-height:1.5em;font-size:15px}#medSyncStatus{font-size:14px;margin-left:12px}
+</style>
+<div id="medAuthGate">
+ <form id="medAuthCard">
+  <h2>MED · Carnet partagé</h2>
+  <p>Connectez-vous pour accéder aux notes communes et les synchroniser entre appareils.</p>
+  <label for="medEmail">Adresse e-mail</label><input id="medEmail" type="email" autocomplete="email" required>
+  <label for="medPassword">Mot de passe</label><input id="medPassword" type="password" autocomplete="current-password" minlength="6" required>
+  <button class="btn" type="submit" id="medSignIn">Se connecter</button>
+  <button class="btn ghost" type="button" id="medSignUp">Créer un compte</button>
+  <p id="medAuthMsg" role="status">Connexion sécurisée par Supabase.</p>
+  <small>Utilisez le même compte sur vos appareils, ou créez un compte pour chaque membre. Les comptes doivent être confirmés par e-mail si cette option est activée dans Supabase.</small>
+ </form>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
-const KEY='med-carnet-v2', $=s=>document.querySelector(s);
+const KEY='med-carnet-v2', SUPABASE_URL='https://kgfcwmiazubakuqbjako.supabase.co', SUPABASE_KEY='sb_publishable_wWL-L1JkACpSAD806_e0OA_QKp8w7TH', $=s=>document.querySelector(s);
+const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+let cloudReady=false, cloudTimer=null, cloudQueue=Promise.resolve();
+
 const NEXT=[['reprise','Point de reprise'],['prio','Priorités du groupe'],['oubli','À ne pas oublier'],['fils','Fils en cours à reprendre'],['ombre','Ce qui reste dans l’ombre']];
 const uid=()=>Math.random().toString(36).slice(2,9);
 const today=()=>new Date().toISOString().slice(0,10);
@@ -203,7 +226,20 @@ let S;
 try{S=JSON.parse(localStorage.getItem(KEY))}catch(e){}
 S=S||{sessions:[],cur:null,pj:[{id:uid(),name:'Personnage 1',text:''}],next:{},mys:[]};
 if(!S.sessions.length){const s={id:uid(),date:today(),faits:'',actions:''};S.sessions.push(s);S.cur=s.id}
-const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}};
+const save=()=>{
+  try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}
+  if(!cloudReady)return;
+  clearTimeout(cloudTimer);
+  $('#medSyncStatus')?.replaceChildren(document.createTextNode('Enregistrement…'));
+  cloudTimer=setTimeout(()=>{
+    const snapshot=JSON.parse(JSON.stringify(S));
+    cloudQueue=cloudQueue.then(async()=>{
+      const {error}=await sb.from('med_shared_state').upsert({id:'main',state:snapshot,updated_at:new Date().toISOString()});
+      if(error)throw error;
+    }).then(()=>{$('#medSyncStatus')?.replaceChildren(document.createTextNode('Synchronisé en ligne'))})
+      .catch(err=>{$('#medSyncStatus')?.replaceChildren(document.createTextNode('Erreur de synchronisation — vérifiez la connexion')) ; console.error('MED sync error',err)});
+  },500);
+};
 const cur=()=>S.sessions.find(s=>s.id===S.cur)||S.sessions[0];
 const sorted=()=>[...S.sessions].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
 const esc=t=>(t||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -260,7 +296,55 @@ $('#imp').onclick=()=>$('#file').click();
 $('#file').onchange=e=>{const f=e.target.files[0];if(!f)return;f.text().then(t=>{try{const d=JSON.parse(t);if(!d.sessions)throw 0;S=d;save();init()}catch(_){alert('Ce fichier n’est pas une sauvegarde valide.')}})};
 
 function init(){renderSess();renderPJ();renderNext();renderMy();show('s')}
-init();
+async function connectMED(email,password,signup=false){
+  const msg=$('#medAuthMsg'); msg.textContent='Connexion en cours…';
+  const result=signup
+    ? await sb.auth.signUp({email,password})
+    : await sb.auth.signInWithPassword({email,password});
+  if(result.error){msg.textContent=result.error.message;return false}
+  if(signup && !result.data.session){
+    msg.textContent='Compte créé. Vérifiez votre e-mail si la confirmation est demandée, puis connectez-vous.';
+    return false;
+  }
+  return loadCloudState();
+}
+async function loadCloudState(){
+  const msg=$('#medAuthMsg');
+  try{
+    const {data:rows,error}=await sb.from('med_shared_state').select('state').eq('id','main').limit(1);
+    if(error)throw error;
+    if(rows && rows.length){
+      S=rows[0].state;
+      localStorage.setItem(KEY,JSON.stringify(S));
+    }else{
+      // Première connexion : conserve les données locales de cet appareil et initialise la base partagée.
+      const {error:writeError}=await sb.from('med_shared_state').upsert({id:'main',state:S,updated_at:new Date().toISOString()});
+      if(writeError)throw writeError;
+    }
+    cloudReady=true;
+    $('#medAuthGate').hidden=true;
+    $('#medSyncStatus').textContent='Connecté · synchronisation en ligne';
+    init();
+    return true;
+  }catch(err){
+    msg.textContent='La base en ligne n’est pas encore prête. Exécutez supabase/setup.sql dans Supabase > SQL Editor, puis réessayez.';
+    console.error('MED initial sync error',err);
+    return false;
+  }
+}
+$('#medAuthCard').addEventListener('submit',async e=>{
+  e.preventDefault();
+  await connectMED($('#medEmail').value.trim(),$('#medPassword').value,false);
+});
+$('#medSignUp').addEventListener('click',async()=>{
+  await connectMED($('#medEmail').value.trim(),$('#medPassword').value,true);
+});
+(async()=>{
+  try{
+    const {data}=await sb.auth.getSession();
+    if(data.session){await loadCloudState()}
+  }catch(e){console.error(e)}
+})();
 </script>
 </body>
 </html>
