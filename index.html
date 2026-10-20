@@ -389,8 +389,13 @@ async function loadCloudState(){
     init();
     return true;
   }catch(err){
-    msg.textContent='Compte connecté, mais le chargement des notes partagées a échoué : '+(err && err.message ? err.message : 'erreur inconnue')+' Vous pouvez réessayer en rechargeant la page.';
     console.error('MED initial sync error',err);
+    // Ne pas bloquer tout le carnet si l’authentification a réussi mais que la base partagée est lente.
+    // On laisse l’application accessible en mode local et on signale que la synchronisation est indisponible.
+    cloudReady=false;
+    $('#medAuthGate').hidden=true;
+    $('#medSyncStatus').textContent='Connecté, mais synchronisation indisponible — vos modifications restent locales sur cet appareil';
+    init();
     return false;
   }
 }
