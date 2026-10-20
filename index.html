@@ -313,7 +313,23 @@ $('#file').onchange=e=>{const f=e.target.files[0];if(!f)return;f.text().then(t=>
 
 function init(){renderSess();renderPJ();renderNext();renderMy();show('s')}
 async function connectMED(email,password,signup=false){
-  const msg=$('#medAuthMsg'); msg.textContent='Connexion en cours…';
+  const msg=$('#medAuthMsg');
+  // Le bouton "Créer un compte" est de type button : la validation HTML du formulaire
+  // ne s'exécute pas automatiquement. Ne jamais appeler signUp avec des champs vides,
+  // car Supabase peut alors interpréter la requête comme une tentative anonyme.
+  if(!email || !password){
+    msg.textContent='Saisissez votre adresse e-mail et un mot de passe pour continuer.';
+    return false;
+  }
+  if(!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)){
+    msg.textContent='Saisissez une adresse e-mail valide.';
+    return false;
+  }
+  if(password.length<6){
+    msg.textContent='Le mot de passe doit contenir au moins 6 caractères.';
+    return false;
+  }
+  msg.textContent='Connexion en cours…';
   const result=signup
     ? await sb.auth.signUp({
         email,
