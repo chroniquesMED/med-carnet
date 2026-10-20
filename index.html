@@ -361,15 +361,26 @@ async function connectMED(email,password,signup=false){
 }
 async function loadCloudState(){
   const msg=$('#medAuthMsg');
+  const withTimeout=(promise,label)=>Promise.race([
+    promise,
+    new Promise((_,reject)=>setTimeout(()=>reject(new Error(label+' : le serveur ne répond pas après 15 secondes.')),15000))
+  ]);
   try{
-    const {data:rows,error}=await sb.from('med_shared_state').select('state').eq('id','main').limit(1);
+    msg.textContent='Connexion réussie. Chargement des notes partagées…';
+    const {data:rows,error}=await withTimeout(
+      sb.from('med_shared_state').select('state').eq('id','main').limit(1),
+      'Chargement des notes'
+    );
     if(error)throw error;
     if(rows && rows.length){
       S=rows[0].state;
       localStorage.setItem(KEY,JSON.stringify(S));
     }else{
       // Première connexion : conserve les données locales de cet appareil et initialise la base partagée.
-      const {error:writeError}=await sb.from('med_shared_state').upsert({id:'main',state:S,updated_at:new Date().toISOString()});
+      const {error:writeError}=await withTimeout(
+        sb.from('med_shared_state').upsert({id:'main',state:S,updated_at:new Date().toISOString()}),
+        'Initialisation des notes'
+      );
       if(writeError)throw writeError;
     }
     cloudReady=true;
@@ -378,7 +389,7 @@ async function loadCloudState(){
     init();
     return true;
   }catch(err){
-    msg.textContent='La base en ligne n’est pas encore prête. Exécutez supabase/setup.sql dans Supabase > SQL Editor, puis réessayez.';
+    msg.textContent='Compte connecté, mais le chargement des notes partagées a échoué : '+(err && err.message ? err.message : 'erreur inconnue')+' Vous pouvez réessayer en rechargeant la page.';
     console.error('MED initial sync error',err);
     return false;
   }
