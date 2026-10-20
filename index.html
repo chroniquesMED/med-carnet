@@ -221,7 +221,7 @@ footer b{font-family:var(--display);font-style:normal;color:var(--ink)}
 <script>
 const KEY='med-carnet-v2', SUPABASE_URL='https://kgfcwmiazubakuqbjako.supabase.co', SUPABASE_KEY='sb_publishable_wWL-L1JkACpSAD806_e0OA_QKp8w7TH', $=s=>document.querySelector(s);
 const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
-let cloudReady=false, cloudTimer=null, cloudQueue=Promise.resolve();
+let cloudReady=false, cloudTimer=null, cloudQueue=Promise.resolve(), cloudChannel=null;
 
 const NEXT=[['reprise','Point de reprise'],['prio','Priorités du groupe'],['oubli','À ne pas oublier'],['fils','Fils en cours à reprendre'],['ombre','Ce qui reste dans l’ombre']];
 const uid=()=>Math.random().toString(36).slice(2,9);
@@ -301,6 +301,31 @@ $('#imp').onclick=()=>$('#file').click();
 $('#file').onchange=e=>{const f=e.target.files[0];if(!f)return;f.text().then(t=>{try{const d=JSON.parse(t);if(!d.sessions)throw 0;S=d;save();init()}catch(_){alert('Ce fichier n’est pas une sauvegarde valide.')}})};
 
 function init(){renderSess();renderPJ();renderNext();renderMy();show('s')}
+function subscribeToSharedState(){
+  if(cloudChannel) return;
+  cloudChannel=sb.channel('med-shared-state-live')
+    .on('postgres_changes',{event:'UPDATE',schema:'public',table:'med_shared_state',filter:'id=eq.main'},payload=>{
+      const incoming=payload.new && payload.new.state;
+      if(!incoming || JSON.stringify(incoming)===JSON.stringify(S)) return;
+      // Les changements des autres appareils sont appliqués immédiatement.
+      S=incoming;
+      try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}
+      init();
+      $('#medSyncStatus').textContent='Carnet partagé · modification reçue en direct';
+    })
+    .on('postgres_changes',{event:'INSERT',schema:'public',table:'med_shared_state',filter:'id=eq.main'},payload=>{
+      const incoming=payload.new && payload.new.state;
+      if(!incoming || JSON.stringify(incoming)===JSON.stringify(S)) return;
+      S=incoming;
+      try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}
+      init();
+      $('#medSyncStatus').textContent='Carnet partagé · modification reçue en direct';
+    })
+    .subscribe(status=>{
+      if(status==='SUBSCRIBED' && cloudReady) $('#medSyncStatus').textContent='Carnet partagé · synchronisation en direct';
+      if(status==='CHANNEL_ERROR' || status==='TIMED_OUT') $('#medSyncStatus').textContent='Carnet partagé · direct indisponible, sauvegarde en ligne activée';
+    });
+}
 async function loadCloudState(){
   const status=$('#medSyncStatus');
   const withTimeout=(promise,label)=>Promise.race([
@@ -327,6 +352,7 @@ async function loadCloudState(){
     cloudReady=true;
     status.textContent='Carnet partagé · synchronisation en ligne';
     init();
+    subscribeToSharedState();
     return true;
   }catch(err){
     console.error('MED initial sync error',err);
