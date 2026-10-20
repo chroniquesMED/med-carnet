@@ -315,7 +315,14 @@ function init(){renderSess();renderPJ();renderNext();renderMy();show('s')}
 async function connectMED(email,password,signup=false){
   const msg=$('#medAuthMsg'); msg.textContent='Connexion en cours…';
   const result=signup
-    ? await sb.auth.signUp({email,password})
+    ? await sb.auth.signUp({
+        email,
+        password,
+        options: {
+          // Revenir sur la page GitHub Pages (y compris le sous-chemin /med-carnet/).
+          emailRedirectTo: window.location.origin + window.location.pathname
+        }
+      })
     : await sb.auth.signInWithPassword({email,password});
   if(result.error){msg.textContent=result.error.message;return false}
   if(signup && !result.data.session){
