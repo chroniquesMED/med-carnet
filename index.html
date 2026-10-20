@@ -199,6 +199,22 @@ footer b{font-family:var(--display);font-style:normal;color:var(--ink)}
 #medAuthCard{background:var(--paper,#f4ecd9);color:var(--ink,#2a2418);max-width:460px;width:100%;padding:28px;border:1px solid var(--gold,#b98a4b);border-radius:8px}
 #medAuthCard h2{margin-top:0}#medAuthCard input{display:block;width:100%;margin:6px 0 14px;padding:10px;border:1px solid var(--line,#d3c4a2);background:white}
 #medAuthMsg{min-height:1.5em;font-size:15px}#medSyncStatus{font-size:14px;margin-left:12px}
+
+/* Correctifs mobiles : empêcher le formulaire de date et les cartes de dépasser */
+@media (max-width: 600px) {
+  html, body { max-width: 100%; overflow-x: clip; }
+  main, .panel, .card, .row, .row > div { min-width: 0; }
+  main { width: 100%; padding-left: 12px; padding-right: 12px; }
+  .panel { width: 100%; }
+  .card { width: 100%; padding: 14px; }
+  .row { gap: 10px; }
+  .row > div:last-child { flex: 1 1 auto; min-width: 0; max-width: 100%; }
+  #fDate { display: block; width: 100%; max-width: 100% !important; min-width: 0; }
+  input, select, textarea { max-width: 100%; }
+  #medAuthGate { padding: 12px; overflow-y: auto; }
+  #medAuthCard { max-width: 100%; padding: 20px; }
+}
+
 </style>
 <div id="medAuthGate">
  <form id="medAuthCard">
