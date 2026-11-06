@@ -137,6 +137,7 @@ footer b{font-family:var(--display);font-style:normal;color:var(--ink)}
       <div class="pick">
         <div class="sel"><label class="lab" for="sessSel">Consulter une séance</label><select id="sessSel"></select></div>
         <button class="btn" id="newSess"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Nouvelle séance</button>
+        <button class="btn ghost" id="delSess" title="Supprimer la séance sélectionnée">Supprimer cette séance</button>
       </div>
       <div class="row"><div class="ico"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></div>
         <div><label class="lab" for="fDate">Date</label><input type="date" id="fDate" style="max-width:260px"></div></div>
@@ -271,6 +272,15 @@ function renderMy(){
 $('#sessSel').onchange=e=>{S.cur=e.target.value;save();renderSess()};
 $('#recent').onclick=e=>{const b=e.target.closest('button');if(b){S.cur=b.dataset.id;save();renderSess();show('s')}};
 $('#newSess').onclick=()=>{const s={id:uid(),date:today(),faits:'',actions:''};S.sessions.push(s);S.cur=s.id;save();renderSess()};
+$('#delSess').onclick=()=>{
+  const s=cur();
+  if(!s)return;
+  if(!confirm('Supprimer définitivement cette séance et son compte rendu ?'))return;
+  S.sessions=S.sessions.filter(x=>x.id!==s.id);
+  if(!S.sessions.length){const fresh={id:uid(),date:today(),faits:'',actions:''};S.sessions.push(fresh);S.cur=fresh.id}
+  else S.cur=sorted()[0].id;
+  save();renderSess();
+};
 $('#fDate').oninput=e=>{cur().date=e.target.value;save();renderSess()};
 $('#fFaits').oninput=e=>{cur().faits=e.target.value;save()};
 $('#fActions').oninput=e=>{cur().actions=e.target.value;save()};
