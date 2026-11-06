@@ -364,6 +364,8 @@ async function loadCloudState(){
       );
       if(writeError)throw writeError;
     }
+    S.cur=sorted()[0]?.id||null;
+    localStorage.setItem(KEY,JSON.stringify(S));
     cloudReady=true;
     status.textContent='Carnet partagé · synchronisation en ligne';
     init();
