@@ -222,7 +222,7 @@ footer b{font-family:var(--display);font-style:normal;color:var(--ink)}
 <script>
 const KEY='med-carnet-v2', SUPABASE_URL='https://kgfcwmiazubakuqbjako.supabase.co', SUPABASE_KEY='sb_publishable_wWL-L1JkACpSAD806_e0OA_QKp8w7TH', $=s=>document.querySelector(s);
 const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
-let cloudReady=false, cloudTimer=null, cloudQueue=Promise.resolve(), cloudChannel=null;
+let cloudReady=false, cloudTimer=null, cloudQueue=Promise.resolve(), cloudChannel=null, localRevision=0;
 
 const NEXT=[['reprise','Point de reprise'],['prio','Priorités du groupe'],['oubli','À ne pas oublier'],['fils','Fils en cours à reprendre'],['ombre','Ce qui reste dans l’ombre']];
 const uid=()=>Math.random().toString(36).slice(2,9);
@@ -231,8 +231,8 @@ const fmt=d=>d?new Date(d+'T12:00').toLocaleDateString('fr-FR',{day:'numeric',mo
 let S;
 try{S=JSON.parse(localStorage.getItem(KEY))}catch(e){}
 S=S||{sessions:[],cur:null,pj:[{id:uid(),name:'Personnage 1',text:''}],next:{},mys:[]};
-if(!S.sessions.length){const s={id:uid(),date:today(),faits:'',actions:''};S.sessions.push(s);S.cur=s.id}
 const save=()=>{
+  localRevision++;
   try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}
   if(!cloudReady)return;
   clearTimeout(cloudTimer);
@@ -246,16 +246,16 @@ const save=()=>{
       .catch(err=>{$('#medSyncStatus')?.replaceChildren(document.createTextNode('Erreur de synchronisation — vérifiez la connexion')) ; console.error('MED sync error',err)});
   },500);
 };
-const cur=()=>S.sessions.find(s=>s.id===S.cur)||S.sessions[0];
+const cur=()=>S.sessions.find(s=>s.id===S.cur)||sorted()[0]||null;
 const sorted=()=>[...S.sessions].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
 const esc=t=>(t||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const calIco='<svg class="i" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4M8 14h.01M12 14h.01M16 14h.01"/></svg>';
 
 function renderSess(){
-  const c=cur(); S.cur=c.id;
-  $('#sessSel').innerHTML=sorted().map(s=>`<option value="${s.id}" ${s.id===c.id?'selected':''}>${fmt(s.date)}</option>`).join('');
-  $('#fDate').value=c.date||''; $('#fFaits').value=c.faits||''; $('#fActions').value=c.actions||'';
-  $('#recent').innerHTML=sorted().slice(0,5).map(s=>`<li class="${s.id===c.id?'on':''}"><button data-id="${s.id}">${calIco}<span>${fmt(s.date)}</span><svg class="i" viewBox="0 0 24 24" style="font-size:16px"><path d="M9 5l7 7-7 7"/></svg></button></li>`).join('');
+  const c=cur(); S.cur=c?.id||null;
+  $('#sessSel').innerHTML=sorted().map(s=>`<option value="${s.id}" ${s.id===c?.id?'selected':''}>${fmt(s.date)}</option>`).join('');
+  $('#fDate').value=c?.date||''; $('#fFaits').value=c?.faits||''; $('#fActions').value=c?.actions||'';
+  $('#recent').innerHTML=sorted().slice(0,5).map(s=>`<li class="${s.id===c?.id?'on':''}"><button data-id="${s.id}">${calIco}<span>${fmt(s.date)}</span><svg class="i" viewBox="0 0 24 24" style="font-size:16px"><path d="M9 5l7 7-7 7"/></svg></button></li>`).join('');
 }
 function renderPJ(){
   $('#pjList').innerHTML=S.pj.map(p=>`<div class="box"><div class="top"><input type="text" value="${esc(p.name)}" data-pj="${p.id}" data-k="name" aria-label="Nom du personnage"><button class="x" data-del-pj="${p.id}" title="Supprimer">✕</button></div><textarea rows="5" data-pj="${p.id}" data-k="text" placeholder="Souvenirs, idées, objectifs, détails à ne pas perdre…">${esc(p.text)}</textarea></div>`).join('');
@@ -277,13 +277,12 @@ $('#delSess').onclick=()=>{
   if(!s)return;
   if(!confirm('Supprimer définitivement cette séance et son compte rendu ?'))return;
   S.sessions=S.sessions.filter(x=>x.id!==s.id);
-  if(!S.sessions.length){const fresh={id:uid(),date:today(),faits:'',actions:''};S.sessions.push(fresh);S.cur=fresh.id}
-  else S.cur=sorted()[0].id;
+  S.cur=sorted()[0]?.id||null;
   save();renderSess();
 };
-$('#fDate').oninput=e=>{cur().date=e.target.value;save();renderSess()};
-$('#fFaits').oninput=e=>{cur().faits=e.target.value;save()};
-$('#fActions').oninput=e=>{cur().actions=e.target.value;save()};
+$('#fDate').oninput=e=>{const s=cur();if(!s)return;s.date=e.target.value;save();renderSess()};
+$('#fFaits').oninput=e=>{const s=cur();if(!s)return;s.faits=e.target.value;save()};
+$('#fActions').oninput=e=>{const s=cur();if(!s)return;s.actions=e.target.value;save()};
 $('#addPJ').onclick=()=>{S.pj.push({id:uid(),name:'Nouveau personnage',text:''});save();renderPJ()};
 $('#addMy').onclick=()=>{S.mys.push({id:uid(),title:'',status:'Hypothèse',text:''});save();renderMy()};
 document.addEventListener('input',e=>{
@@ -338,6 +337,7 @@ function subscribeToSharedState(){
 }
 async function loadCloudState(){
   const status=$('#medSyncStatus');
+  const revisionAtStart=localRevision;
   const withTimeout=(promise,label)=>Promise.race([
     promise,
     new Promise((_,reject)=>setTimeout(()=>reject(new Error(label+' : le serveur ne répond pas après 15 secondes.')),15000))
@@ -350,8 +350,13 @@ async function loadCloudState(){
     );
     if(error)throw error;
     if(rows && rows.length){
-      S=rows[0].state;
-      localStorage.setItem(KEY,JSON.stringify(S));
+      if(localRevision===revisionAtStart){
+        S=rows[0].state||S;
+        localStorage.setItem(KEY,JSON.stringify(S));
+      }else{
+        const {error:writeError}=await withTimeout(sb.from('med_shared_state').upsert({id:'main',state:S,updated_at:new Date().toISOString()}),'Envoi des modifications locales');
+        if(writeError)throw writeError;
+      }
     }else{
       const {error:writeError}=await withTimeout(
         sb.from('med_shared_state').upsert({id:'main',state:S,updated_at:new Date().toISOString()}),
