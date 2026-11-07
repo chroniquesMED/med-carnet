@@ -187,6 +187,7 @@ footer b{font-family:var(--display);font-style:normal;color:var(--ink)}
 
 <div class="tools">
   <span id="medSyncStatus">Chargement du carnet partagé…</span>
+  <button class="btn ghost" id="retrySync" type="button">Réessayer la synchronisation</button>
   <button class="btn ghost" id="exp">Exporter mes notes</button>
   <button class="btn ghost" id="imp">Importer une sauvegarde</button>
   <button class="btn ghost" onclick="print()">Imprimer / PDF</button>
@@ -220,7 +221,7 @@ footer b{font-family:var(--display);font-style:normal;color:var(--ink)}
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
-const KEY='med-carnet-v2', SUPABASE_URL='https://kgfcwmiazubakuqbjako.supabase.co', SUPABASE_KEY='sb_publishable_wWL-L1JkACpSAD806_e0OA_QKp8w7TH', $=s=>document.querySelector(s);
+const KEY='med-carnet-v2', PENDING_KEY='med-carnet-pending-v1', SUPABASE_URL='https://kgfcwmiazubakuqbjako.supabase.co', SUPABASE_KEY='sb_publishable_wWL-L1JkACpSAD806_e0OA_QKp8w7TH', $=s=>document.querySelector(s);
 const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
 let cloudReady=false, cloudTimer=null, cloudQueue=Promise.resolve(), cloudChannel=null, localRevision=0;
 
@@ -234,16 +235,27 @@ S=S||{sessions:[],cur:null,pj:[{id:uid(),name:'Personnage 1',text:''}],next:{},m
 const save=()=>{
   localRevision++;
   try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}
-  if(!cloudReady)return;
+  if(!cloudReady){
+    try{localStorage.setItem(PENDING_KEY,'1')}catch(e){}
+    $('#medSyncStatus')?.replaceChildren(document.createTextNode('Hors ligne — modifications conservées sur cet appareil, en attente d’envoi'));
+    return;
+  }
   clearTimeout(cloudTimer);
   $('#medSyncStatus')?.replaceChildren(document.createTextNode('Enregistrement…'));
   cloudTimer=setTimeout(()=>{
     const snapshot=JSON.parse(JSON.stringify(S));
+    const revisionAtSnapshot=localRevision;
     cloudQueue=cloudQueue.then(async()=>{
       const {error}=await sb.from('med_shared_state').upsert({id:'main',state:snapshot,updated_at:new Date().toISOString()});
       if(error)throw error;
-    }).then(()=>{$('#medSyncStatus')?.replaceChildren(document.createTextNode('Synchronisé en ligne'))})
-      .catch(err=>{$('#medSyncStatus')?.replaceChildren(document.createTextNode('Erreur de synchronisation — vérifiez la connexion')) ; console.error('MED sync error',err)});
+    }).then(()=>{
+      if(localRevision===revisionAtSnapshot){try{localStorage.removeItem(PENDING_KEY)}catch(e){}}
+      $('#medSyncStatus')?.replaceChildren(document.createTextNode('Synchronisé en ligne'));
+    }).catch(err=>{
+      try{localStorage.setItem(PENDING_KEY,'1')}catch(e){}
+      $('#medSyncStatus')?.replaceChildren(document.createTextNode('Erreur de synchronisation — modifications gardées sur cet appareil'));
+      console.error('MED sync error',err)
+    });
   },500);
 };
 const cur=()=>S.sessions.find(s=>s.id===S.cur)||sorted()[0]||null;
@@ -350,12 +362,14 @@ async function loadCloudState(){
     );
     if(error)throw error;
     if(rows && rows.length){
-      if(localRevision===revisionAtStart){
+      const hasPendingLocal=localStorage.getItem(PENDING_KEY)==='1';
+      if(localRevision===revisionAtStart && !hasPendingLocal){
         S=rows[0].state||S;
         localStorage.setItem(KEY,JSON.stringify(S));
       }else{
         const {error:writeError}=await withTimeout(sb.from('med_shared_state').upsert({id:'main',state:S,updated_at:new Date().toISOString()}),'Envoi des modifications locales');
         if(writeError)throw writeError;
+        localStorage.removeItem(PENDING_KEY);
       }
     }else{
       const {error:writeError}=await withTimeout(
@@ -363,6 +377,7 @@ async function loadCloudState(){
         'Initialisation des notes'
       );
       if(writeError)throw writeError;
+      localStorage.removeItem(PENDING_KEY);
     }
     S.cur=sorted()[0]?.id||null;
     localStorage.setItem(KEY,JSON.stringify(S));
@@ -374,11 +389,18 @@ async function loadCloudState(){
   }catch(err){
     console.error('MED initial sync error',err);
     cloudReady=false;
-    status.textContent='Hors ligne — sauvegarde locale uniquement';
+    try{if(localRevision>revisionAtStart)localStorage.setItem(PENDING_KEY,'1')}catch(e){}
+    status.textContent=localStorage.getItem(PENDING_KEY)==='1'
+      ? 'Hors ligne — modifications conservées ici, en attente d’envoi'
+      : 'Hors ligne — aucune synchronisation confirmée';
     init();
     return false;
   }
 }
+// Réessayer à la demande et automatiquement au retour du réseau/de l’onglet.
+$('#retrySync').onclick=()=>{cloudReady=false;loadCloudState()};
+window.addEventListener('online',()=>{cloudReady=false;loadCloudState()});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden && !cloudReady)loadCloudState()});
 // L’application s’ouvre sans compte. Le carnet commun est chargé en arrière-plan.
 init();
 loadCloudState();
