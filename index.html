@@ -219,50 +219,46 @@ footer b{font-family:var(--display);font-style:normal;color:var(--ink)}
 
 </style>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
 <script>
-const KEY='med-carnet-v2', PENDING_KEY='med-carnet-pending-v1', SUPABASE_URL='https://kgfcwmiazubakuqbjako.supabase.co', SUPABASE_KEY='sb_publishable_wWL-L1JkACpSAD806_e0OA_QKp8w7TH', $=s=>document.querySelector(s);
-const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
-let cloudReady=false, cloudTimer=null, cloudQueue=Promise.resolve(), cloudChannel=null, localRevision=0;
-
+const KEY='med-carnet-v2', PENDING_KEY='med-carnet-pending-v1',
+FIREBASE_CONFIG={apiKey:'AIzaSyC2YdWnc_pz2ITs0Mtf8agLnJFpR4RhR4E',authDomain:'med---carnet-de-campagne.firebaseapp.com',databaseURL:'https://med---carnet-de-campagne-default-rtdb.europe-west1.firebasedatabase.app',projectId:'med---carnet-de-campagne',storageBucket:'med---carnet-de-campagne.firebasestorage.app',messagingSenderId:'683446712036',appId:'1:683446712036:web:02d49aa6b27028e20adef1'},
+$=s=>document.querySelector(s);
+if(!firebase.apps.length)firebase.initializeApp(FIREBASE_CONFIG);
+const fbAuth=firebase.auth(),fbDb=firebase.database(),sharedRef=fbDb.ref('medCarnet/sharedState');
+let cloudReady=false,cloudTimer=null,cloudQueue=Promise.resolve(),localRevision=0,applyingRemote=false,initialCloudValueReceived=false;
+const LEGACY_SEED={pj:[{id:'cqud5dk',name:'Personnage 1',text:''}],cur:'jvm1o72',mys:[],next:{},sessions:[{id:'jvm1o72',date:'2026-10-09',faits:'On est toujours pas bien riche :o) coucouuu',actions:'Déglinguer tous les vilains ours qui nous attaquent !! EH UI TEST 2'}]};
 const NEXT=[['reprise','Point de reprise'],['prio','Priorités du groupe'],['oubli','À ne pas oublier'],['fils','Fils en cours à reprendre'],['ombre','Ce qui reste dans l’ombre']];
-const uid=()=>Math.random().toString(36).slice(2,9);
-const today=()=>new Date().toISOString().slice(0,10);
+const uid=()=>Math.random().toString(36).slice(2,9),today=()=>new Date().toISOString().slice(0,10);
 const fmt=d=>d?new Date(d+'T12:00').toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'}):'Date à renseigner';
-let S;
-try{S=JSON.parse(localStorage.getItem(KEY))}catch(e){}
+let S;try{S=JSON.parse(localStorage.getItem(KEY))}catch(e){}
 S=S||{sessions:[],cur:null,pj:[{id:uid(),name:'Personnage 1',text:''}],next:{},mys:[]};
+const hasContent=d=>!!(d&&((d.sessions||[]).length||(d.pj||[]).some(p=>p.text)||(d.mys||[]).length||Object.values(d.next||{}).some(Boolean)));
+const mergeLegacyAndLocal=(local,legacy)=>{
+ const byId=new Map();[...(legacy.sessions||[]),...(local.sessions||[])].forEach(s=>byId.set(s.id,s));
+ const useLocal=hasContent(local);
+ return {...legacy,...local,sessions:[...byId.values()],pj:useLocal?(local.pj||legacy.pj):legacy.pj,next:useLocal?(local.next||legacy.next):legacy.next,mys:useLocal?(local.mys||legacy.mys):legacy.mys,cur:local.cur||legacy.cur};
+};
 const save=()=>{
-  localRevision++;
-  try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}
-  if(!cloudReady){
-    try{localStorage.setItem(PENDING_KEY,'1')}catch(e){}
-    $('#medSyncStatus')?.replaceChildren(document.createTextNode('Hors ligne — modifications conservées sur cet appareil, en attente d’envoi'));
-    return;
-  }
-  clearTimeout(cloudTimer);
-  $('#medSyncStatus')?.replaceChildren(document.createTextNode('Enregistrement…'));
-  cloudTimer=setTimeout(()=>{
-    const snapshot=JSON.parse(JSON.stringify(S));
-    const revisionAtSnapshot=localRevision;
-    cloudQueue=cloudQueue.then(async()=>{
-      const {error}=await sb.from('med_shared_state').upsert({id:'main',state:snapshot,updated_at:new Date().toISOString()});
-      if(error)throw error;
-    }).then(()=>{
-      if(localRevision===revisionAtSnapshot){try{localStorage.removeItem(PENDING_KEY)}catch(e){}}
-      $('#medSyncStatus')?.replaceChildren(document.createTextNode('Synchronisé en ligne'));
-    }).catch(err=>{
-      try{localStorage.setItem(PENDING_KEY,'1')}catch(e){}
-      $('#medSyncStatus')?.replaceChildren(document.createTextNode('Erreur de synchronisation — modifications gardées sur cet appareil'));
-      console.error('MED sync error',err)
-    });
-  },500);
+ if(applyingRemote)return;
+ localRevision++;
+ try{localStorage.setItem(KEY,JSON.stringify(S));localStorage.setItem(PENDING_KEY,'1')}catch(e){}
+ if(!cloudReady){$('#medSyncStatus')?.replaceChildren(document.createTextNode('Enregistré sur cet appareil — synchronisation en attente'));return}
+ clearTimeout(cloudTimer);$('#medSyncStatus')?.replaceChildren(document.createTextNode('Enregistrement dans Firebase…'));
+ cloudTimer=setTimeout(()=>{
+  const snapshot=JSON.parse(JSON.stringify(S)),rev=localRevision;
+  cloudQueue=cloudQueue.then(()=>sharedRef.set(snapshot)).then(()=>{
+   if(localRevision===rev){try{localStorage.removeItem(PENDING_KEY)}catch(e){}}
+   $('#medSyncStatus')?.replaceChildren(document.createTextNode('Synchronisé avec Firebase'));
+  }).catch(err=>{try{localStorage.setItem(PENDING_KEY,'1')}catch(e){}$('#medSyncStatus')?.replaceChildren(document.createTextNode('Échec Firebase — copie locale conservée'));console.error('MED Firebase sync error',err)});
+ },450);
 };
 const cur=()=>S.sessions.find(s=>s.id===S.cur)||sorted()[0]||null;
 const sorted=()=>[...S.sessions].sort((a,b)=>(b.date||'').localeCompare(a.date||''));
 const esc=t=>(t||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const calIco='<svg class="i" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4M8 14h.01M12 14h.01M16 14h.01"/></svg>';
-
 function renderSess(){
   const c=cur(); S.cur=c?.id||null;
   $('#sessSel').innerHTML=sorted().map(s=>`<option value="${s.id}" ${s.id===c?.id?'selected':''}>${fmt(s.date)}</option>`).join('');
@@ -322,88 +318,39 @@ $('#imp').onclick=()=>$('#file').click();
 $('#file').onchange=e=>{const f=e.target.files[0];if(!f)return;f.text().then(t=>{try{const d=JSON.parse(t);if(!d.sessions)throw 0;S=d;save();init()}catch(_){alert('Ce fichier n’est pas une sauvegarde valide.')}})};
 
 function init(){renderSess();renderPJ();renderNext();renderMy();show('s')}
-function subscribeToSharedState(){
-  if(cloudChannel) return;
-  cloudChannel=sb.channel('med-shared-state-live')
-    .on('postgres_changes',{event:'UPDATE',schema:'public',table:'med_shared_state',filter:'id=eq.main'},payload=>{
-      const incoming=payload.new && payload.new.state;
-      if(!incoming || JSON.stringify(incoming)===JSON.stringify(S)) return;
-      // Les changements des autres appareils sont appliqués immédiatement.
-      S=incoming;
-      try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}
-      init();
-      $('#medSyncStatus').textContent='Carnet partagé · modification reçue en direct';
-    })
-    .on('postgres_changes',{event:'INSERT',schema:'public',table:'med_shared_state',filter:'id=eq.main'},payload=>{
-      const incoming=payload.new && payload.new.state;
-      if(!incoming || JSON.stringify(incoming)===JSON.stringify(S)) return;
-      S=incoming;
-      try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}
-      init();
-      $('#medSyncStatus').textContent='Carnet partagé · modification reçue en direct';
-    })
-    .subscribe(status=>{
-      if(status==='SUBSCRIBED' && cloudReady) $('#medSyncStatus').textContent='Carnet partagé · synchronisation en direct';
-      if(status==='CHANNEL_ERROR' || status==='TIMED_OUT') $('#medSyncStatus').textContent='Carnet partagé · direct indisponible, sauvegarde en ligne activée';
-    });
-}
-async function loadCloudState(){
-  const status=$('#medSyncStatus');
-  const revisionAtStart=localRevision;
-  const withTimeout=(promise,label)=>Promise.race([
-    promise,
-    new Promise((_,reject)=>setTimeout(()=>reject(new Error(label+' : le serveur ne répond pas après 15 secondes.')),15000))
-  ]);
-  try{
-    status.textContent='Chargement du carnet partagé…';
-    const {data:rows,error}=await withTimeout(
-      sb.from('med_shared_state').select('state').eq('id','main').limit(1),
-      'Chargement des notes'
-    );
-    if(error)throw error;
-    if(rows && rows.length){
-      const hasPendingLocal=localStorage.getItem(PENDING_KEY)==='1';
-      if(localRevision===revisionAtStart && !hasPendingLocal){
-        S=rows[0].state||S;
-        localStorage.setItem(KEY,JSON.stringify(S));
-      }else{
-        const {error:writeError}=await withTimeout(sb.from('med_shared_state').upsert({id:'main',state:S,updated_at:new Date().toISOString()}),'Envoi des modifications locales');
-        if(writeError)throw writeError;
-        localStorage.removeItem(PENDING_KEY);
-      }
+async function startFirebaseSync(){
+ const status=$('#medSyncStatus'),revisionAtStart=localRevision;
+ try{
+  status.textContent='Connexion sécurisée à Firebase…';
+  if(!fbAuth.currentUser)await fbAuth.signInAnonymously();
+  status.textContent='Chargement du carnet Firebase…';
+  sharedRef.on('value',snapshot=>{
+   const incoming=snapshot.val();
+   if(!initialCloudValueReceived){
+    initialCloudValueReceived=true;
+    const pending=localStorage.getItem(PENDING_KEY)==='1';
+    if(incoming){
+     if(pending||localRevision>revisionAtStart){cloudReady=true;save();status.textContent='Envoi des modifications locales vers Firebase…'}
+     else{S=incoming;try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}cloudReady=true;init();status.textContent='Carnet synchronisé avec Firebase'}
     }else{
-      const {error:writeError}=await withTimeout(
-        sb.from('med_shared_state').upsert({id:'main',state:S,updated_at:new Date().toISOString()}),
-        'Initialisation des notes'
-      );
-      if(writeError)throw writeError;
-      localStorage.removeItem(PENDING_KEY);
+     S=mergeLegacyAndLocal(S,LEGACY_SEED);cloudReady=true;
+     try{localStorage.setItem(KEY,JSON.stringify(S));localStorage.setItem(PENDING_KEY,'1')}catch(e){}
+     save();status.textContent='Migration initiale vers Firebase…';
     }
-    S.cur=sorted()[0]?.id||null;
-    localStorage.setItem(KEY,JSON.stringify(S));
-    cloudReady=true;
-    status.textContent='Carnet partagé · synchronisation en ligne';
-    init();
-    subscribeToSharedState();
-    return true;
-  }catch(err){
-    console.error('MED initial sync error',err);
-    cloudReady=false;
-    try{if(localRevision>revisionAtStart)localStorage.setItem(PENDING_KEY,'1')}catch(e){}
-    status.textContent=localStorage.getItem(PENDING_KEY)==='1'
-      ? 'Hors ligne — modifications conservées ici, en attente d’envoi'
-      : 'Hors ligne — aucune synchronisation confirmée';
-    init();
-    return false;
-  }
+    return;
+   }
+   if(!incoming||JSON.stringify(incoming)===JSON.stringify(S))return;
+   if(localStorage.getItem(PENDING_KEY)==='1'){save();return}
+   applyingRemote=true;S=incoming;try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}applyingRemote=false;init();
+   status.textContent='Modification reçue en direct depuis Firebase';
+  },err=>{console.error('MED Firebase listener error',err);status.textContent='Firebase inaccessible — copie locale conservée'});
+  return true;
+ }catch(err){cloudReady=false;console.error('MED Firebase startup error',err);status.textContent='Connexion Firebase impossible — modifications conservées sur cet appareil';return false}
 }
-// Réessayer à la demande et automatiquement au retour du réseau/de l’onglet.
-$('#retrySync').onclick=()=>{cloudReady=false;loadCloudState()};
-window.addEventListener('online',()=>{cloudReady=false;loadCloudState()});
-document.addEventListener('visibilitychange',()=>{if(!document.hidden && !cloudReady)loadCloudState()});
-// L’application s’ouvre sans compte. Le carnet commun est chargé en arrière-plan.
-init();
-loadCloudState();
+$('#retrySync').onclick=()=>startFirebaseSync();
+window.addEventListener('online',()=>{if(!cloudReady)startFirebaseSync()});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!cloudReady)startFirebaseSync()});
+init();startFirebaseSync();
 </script>
 </body>
 </html>
