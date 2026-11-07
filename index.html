@@ -235,6 +235,17 @@ const uid=()=>Math.random().toString(36).slice(2,9),today=()=>new Date().toISOSt
 const fmt=d=>d?new Date(d+'T12:00').toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'}):'Date à renseigner';
 let S;try{S=JSON.parse(localStorage.getItem(KEY))}catch(e){}
 S=S||{sessions:[],cur:null,pj:[{id:uid(),name:'Personnage 1',text:''}],next:{},mys:[]};
+// Firebase Realtime Database peut renvoyer les tableaux vides comme null/valeur absente.
+const asArray=v=>Array.isArray(v)?v:(v&&typeof v==='object'?Object.values(v):[]);
+const normalizeState=d=>({
+ ...d,
+ sessions:asArray(d?.sessions),
+ pj:asArray(d?.pj),
+ mys:asArray(d?.mys),
+ next:d?.next&&typeof d.next==='object'?d.next:{},
+ cur:d?.cur??null
+});
+S=normalizeState(S);
 const hasContent=d=>!!(d&&((d.sessions||[]).length||(d.pj||[]).some(p=>p.text)||(d.mys||[]).length||Object.values(d.next||{}).some(Boolean)));
 const mergeLegacyAndLocal=(local,legacy)=>{
  const byId=new Map();[...(legacy.sessions||[]),...(local.sessions||[])].forEach(s=>byId.set(s.id,s));
@@ -273,6 +284,7 @@ function renderNext(){
 }
 const ST=['Établi','Piste','Hypothèse','Rumeur'];
 function renderMy(){
+  S.mys=asArray(S.mys);
   $('#myList').innerHTML=S.mys.length?S.mys.map(m=>`<div class="box"><div class="top"><input type="text" value="${esc(m.title)}" data-my="${m.id}" data-k="title" placeholder="Titre du mystère…"><div class="mini"><select data-my="${m.id}" data-k="status">${ST.map(x=>`<option ${x===m.status?'selected':''}>${x}</option>`).join('')}</select><button class="x" data-del-my="${m.id}" title="Supprimer">✕</button></div></div><textarea rows="3" data-my="${m.id}" data-k="text" placeholder="Ce que l’on sait, ce que l’on suppose…">${esc(m.text)}</textarea></div>`).join(''):'<p class="sub">Rien pour l’instant. Ajoutez un premier mystère ou une piste.</p>';
 }
 
@@ -292,12 +304,12 @@ $('#fDate').oninput=e=>{const s=cur();if(!s)return;s.date=e.target.value;save();
 $('#fFaits').oninput=e=>{const s=cur();if(!s)return;s.faits=e.target.value;save()};
 $('#fActions').oninput=e=>{const s=cur();if(!s)return;s.actions=e.target.value;save()};
 $('#addPJ').onclick=()=>{S.pj.push({id:uid(),name:'Nouveau personnage',text:''});save();renderPJ()};
-$('#addMy').onclick=()=>{S.mys.push({id:uid(),title:'',status:'Hypothèse',text:''});save();renderMy()};
+$('#addMy').onclick=()=>{S.mys=asArray(S.mys);S.mys.push({id:uid(),title:'',status:'Hypothèse',text:''});save();renderMy()};
 document.addEventListener('input',e=>{
   const t=e.target,d=t.dataset;
   if(d.pj){S.pj.find(p=>p.id===d.pj)[d.k]=t.value}
   else if(d.next){S.next[d.next]=t.value}
-  else if(d.my){S.mys.find(m=>m.id===d.my)[d.k]=t.value}
+  else if(d.my){const m=S.mys.find(m=>m.id===d.my);if(m)m[d.k]=t.value}
   else return; save();
 });
 document.addEventListener('click',e=>{
@@ -331,7 +343,7 @@ async function startFirebaseSync(){
     const pending=localStorage.getItem(PENDING_KEY)==='1';
     if(incoming){
      if(pending||localRevision>revisionAtStart){cloudReady=true;save();status.textContent='Envoi des modifications locales vers Firebase…'}
-     else{S=incoming;try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}cloudReady=true;init();status.textContent='Carnet synchronisé avec Firebase'}
+     else{S=normalizeState(incoming);try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}cloudReady=true;init();status.textContent='Carnet synchronisé avec Firebase'}
     }else{
      S=mergeLegacyAndLocal(S,LEGACY_SEED);cloudReady=true;
      try{localStorage.setItem(KEY,JSON.stringify(S));localStorage.setItem(PENDING_KEY,'1')}catch(e){}
@@ -341,7 +353,7 @@ async function startFirebaseSync(){
    }
    if(!incoming||JSON.stringify(incoming)===JSON.stringify(S))return;
    if(localStorage.getItem(PENDING_KEY)==='1'){save();return}
-   applyingRemote=true;S=incoming;try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}applyingRemote=false;init();
+   applyingRemote=true;S=normalizeState(incoming);try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}applyingRemote=false;init();
    status.textContent='Modification reçue en direct depuis Firebase';
   },err=>{console.error('MED Firebase listener error',err);status.textContent='Firebase inaccessible — copie locale conservée'});
   return true;
