@@ -353,8 +353,39 @@ async function startFirebaseSync(){
    }
    if(!incoming||JSON.stringify(incoming)===JSON.stringify(S))return;
    if(localStorage.getItem(PENDING_KEY)==='1'){save();return}
-   applyingRemote=true;S=normalizeState(incoming);try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}applyingRemote=false;init();
-   status.textContent='Modification reçue en direct depuis Firebase';
+   // Appliquer l'état distant sans reconstruire toute l'interface :
+   // un champ actif ne doit jamais perdre le focus ni sa saisie en cours.
+   const active=document.activeElement;
+   const isEditing=active&&active!==document.body&&
+     (active.matches('input,textarea,select')||active.isContentEditable);
+   const keep={
+    id:active?.id||'', pj:active?.dataset?.pj||'', next:active?.dataset?.next||'',
+    my:active?.dataset?.my||'', key:active?.dataset?.k||'',
+    value:active?.value
+   };
+   applyingRemote=true;
+   const remote=normalizeState(incoming);
+   S=remote;
+   if(isEditing){
+    if(keep.id==='fFaits'||keep.id==='fActions'||keep.id==='fDate'){
+     const s=cur();if(s){const k=keep.id==='fFaits'?'faits':keep.id==='fActions'?'actions':'date';s[k]=keep.value;}
+    }else if(keep.pj){const p=S.pj.find(x=>x.id===keep.pj);if(p)p[keep.key]=keep.value;}
+    else if(keep.next){S.next[keep.next]=keep.value;}
+    else if(keep.my){const m=S.mys.find(x=>x.id===keep.my);if(m)m[keep.key]=keep.value;}
+   }
+   try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}
+   applyingRemote=false;
+   // Ne redessiner que les zones qui ne contiennent pas le champ actif.
+   if(!isEditing||!['fDate','fFaits','fActions','sessSel'].includes(keep.id))renderSess();
+   if(!isEditing||!active.closest('#pjList'))renderPJ();
+   if(!isEditing||!active.closest('#nextList'))renderNext();
+   if(!isEditing||!active.closest('#myList'))renderMy();
+   // À la sortie du champ, la valeur locale conservée est envoyée au cloud.
+   if(isEditing&&!active.dataset.medBlurBound){
+    active.dataset.medBlurBound='1';
+    active.addEventListener('blur',()=>{save();}, {once:true});
+   }
+   status.textContent='Modification reçue — saisie en cours préservée';
   },err=>{console.error('MED Firebase listener error',err);status.textContent='Firebase inaccessible — copie locale conservée'});
   return true;
  }catch(err){cloudReady=false;console.error('MED Firebase startup error',err);status.textContent='Connexion Firebase impossible — modifications conservées sur cet appareil';return false}
